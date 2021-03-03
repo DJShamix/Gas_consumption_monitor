@@ -16,8 +16,9 @@ Encoder enc1(encoder_CLK_pin, encoder_DT_pin, encoder_SW_pin);
 #define pressure_sensor_shunt_res 239.4   // Ohms 
 #define temp_sensor_current       0.001   // Temp sensor current is 1 mA
 
-#define update_interval_sens       200        // Update data each 200 millseconds
-#define update_interval_disp       600        // Update data each 600 millseconds
+#define update_interval_sens       30        // Update data each 200 millseconds
+#define update_interval_disp       300        // Update data each 600 millseconds
+#define update_interval_test       600        // Update data each 600 millseconds
 
 LCD_1602_RUS lcd(0x27, 16, 2);
 
@@ -52,6 +53,11 @@ struct{
 
   int pressure_error;
   int temperature_error;
+  
+  uint8_t is_testing;       // stores state of test mode "activation"
+  uint8_t test_condition;   // stores "time left" for test to end
+  int     wasted_gas_value; // stores amoung of gas wasted
+  long    measuring_time;   // stores time of the last measurement
 }actual_state;
 /*------------------------------*/
 
@@ -81,6 +87,8 @@ enum{
 //display_states
 enum{
   STATE_MAIN_SCREEN = 0,
+  STATE_TEST_SCREEN,
+  STATE_TEST_RESULT,
   STATE_SETTINGS,
   STATE_SET_BLOWOUT,
   STATE_SET_TIME,
@@ -96,6 +104,7 @@ void read_sensors();
 float convert_ADC_volt(int adc_voltage);
 void calculate_pressure(int sensor_id, int adc_voltage);
 float calculate_temperature(int adc_voltage);
+void do_testing_program();
 void update_encoder();
 void do_action_with_encoder(uint8_t action);
 void update_display();
@@ -115,6 +124,7 @@ void setup() {
 
   actual_state.pressure_error    = SYS_ERROR_CLEAR; // Clear errors
   actual_state.temperature_error = SYS_ERROR_CLEAR;
+  actual_state.is_testing = 0;                      // Clear system mode
 
   lcd.init();                   //Инициализация LCD (по умолчанию для ESP8266: 4 - SDA, 5 - SCL)
   lcd.backlight();
@@ -136,9 +146,10 @@ void setup() {
 void loop() {
   // put your main code here, to run repeatedly:
 
-  static long last_update_sens = millis();
-  static long last_update_disp = millis();
-
+  static long last_update_sens  = millis();
+  static long last_update_disp  = millis();
+  static long last_testing_mode = millis();
+  
   //##### Encoder data update #####
   update_encoder();
   /*###############################*/
@@ -158,6 +169,13 @@ void loop() {
   /*###############################*/
 
 
+  // If testing mode was activated, then test it
+  if(millis() >= last_testing_mode + update_interval_test){
+    if(actual_state.is_testing == 1) do_testing_program();
+    last_testing_mode = millis();
+  }
+
+
   // Screen update
   if(millis() >= last_update_disp + update_interval_disp){
 
@@ -174,9 +192,22 @@ void loop() {
 
 /* Read sensors voltage to ADC */
 void read_sensors(){
-  actual_state.adc_press_1 = analogRead(pressure_sens_1_pin);
-  actual_state.adc_press_2 = analogRead(pressure_sens_2_pin);
-  actual_state.adc_temp    = analogRead(temperature_sens_pin);
+
+  #define sample_size     30
+  long data_buffer_pr_1 = 0;
+  long data_buffer_pr_2 = 0;
+  long data_buffer_temp = 0;
+
+  for(int i = 0; i < sample_size; i++){
+  
+    data_buffer_pr_1 += analogRead(pressure_sens_1_pin);
+    data_buffer_pr_2 += analogRead(pressure_sens_2_pin);
+    data_buffer_temp += analogRead(temperature_sens_pin);
+  }
+
+  actual_state.adc_press_1 = data_buffer_pr_1 / sample_size;
+  actual_state.adc_press_2 = data_buffer_pr_2 / sample_size;
+  actual_state.adc_temp    = data_buffer_temp / sample_size;
 }
 /*------------------------------*/
 
@@ -278,16 +309,27 @@ float calculate_temperature(int adc_voltage){
 /*------------------------------*/
 
 
+/* Execute testing program */
+void do_testing_program(){
+
+  for(int i = 0; i < 100; i++){
+    actual_state.wasted_gas_value = i;
+    actual_state.measuring_time = i * 3500 / 200;
+  }
+
+  if(actual_state.test_condition + 1 <= 10)   actual_state.test_condition++;
+  else                                        display_state = STATE_TEST_RESULT;
+  
+}
+/*------------------------------*/
+
+
 /* Air valves control */
 void control_valves(){
 
   uint8_t bit_mask = 0;
 
-  Serial.println("#### Vents states #####");
-  for(int i = 0; i < 8; i++){
-    Serial.print(valve_air_states[i]);
-    Serial.println("");
-    
+  for(int i = 0; i < 8; i++){    
     bit_mask |= (1 && valve_air_states[i]) << i;
   }
 
@@ -295,8 +337,6 @@ void control_valves(){
   Serial.println("#### VENTING #####");
   Serial.println("#### !!!!!!! #####");
   Serial.println(bit_mask);
-
-  //bit_mask = 255;
 
   SPI.transfer(bit_mask);
   digitalWrite(SPI_SS_PIN, LOW);
@@ -325,7 +365,6 @@ void update_encoder(){
 /*------------------------------*/
 
 
-
 void do_action_with_encoder(uint8_t action){
 
   static uint8_t last_display_state = display_state;
@@ -341,10 +380,51 @@ void do_action_with_encoder(uint8_t action){
   
   switch(display_state){
       case STATE_MAIN_SCREEN:
-         if(action == ENC_CLICK)
-            display_state = STATE_SETTINGS;
-            display_need_update = 1;
+        if(action == ENC_CLICK){
+          display_state = STATE_TEST_SCREEN;
+          actual_state.is_testing = 1;
+        }else
+        if(action == ENC_LONG_PRESS){
+           display_state = STATE_SETTINGS;
+           actual_state.test_condition = 0;
+        }
+        
+        display_need_update = 1;
+        list_position = 0;
+        break;
+
+      case STATE_TEST_SCREEN:
+        if(action == ENC_LONG_PRESS){
+          display_state = STATE_MAIN_SCREEN;
+          actual_state.test_condition = 0;
+          actual_state.is_testing = 0;
+          list_position = 0;
+        }
+        break;
+
+      case STATE_TEST_RESULT:
+        switch(action){
+
+          case ENC_LEFT:
+            if(list_position - 1 >= 0){ list_position--; display_need_update = 1; }
+            break;
+            
+          case ENC_RIGHT:
+            if(list_position + 1 <= 2){ list_position++; display_need_update = 1; }
+            break;
+            
+          case ENC_LONG_PRESS:
+          
+            //store_result_to_SD // Store test result to SD Card
+            // With state: list_position == 0 - PASS, otherwise NO_PASS
+            // With timestamp
+            
+            display_state = STATE_MAIN_SCREEN;
+            actual_state.test_condition = 0;
+            actual_state.is_testing = 0;
             list_position = 0;
+            break;       
+        }
         break;
   
       case STATE_SETTINGS:
@@ -425,6 +505,12 @@ void do_action_with_encoder(uint8_t action){
           display_need_update = 1;
           list_position = 0;
         }
+
+        if(action == ENC_LEFT)
+          if(list_position - 1 >= 0){ list_position--; display_need_update = 1; }
+            
+        if(action == ENC_RIGHT)
+            if(list_position + 1 < 2){ list_position++; display_need_update = 1; }
         break;  
     }
 
@@ -444,6 +530,14 @@ void update_display(){
       display_main_screen();
       break;
 
+    case STATE_TEST_SCREEN:
+      display_test_screen();
+      break;
+
+    case STATE_TEST_RESULT:
+      display_test_result();
+      break;
+
     case STATE_SETTINGS:
       display_settings_screen();
       break;
@@ -461,28 +555,46 @@ void update_display(){
 
 /* Display main screen */
 void display_main_screen(){
-
-  Serial.print(actual_state.adc_press_1);
-  Serial.print("  ");
-  Serial.print(actual_state.pressure_1);
-  Serial.print("  ");
-  Serial.print(actual_state.adc_press_2);
-  Serial.print("  ");
-  Serial.println(actual_state.pressure_2);
-  
+ 
   lcd.setCursor(0, 0);
-  lcd.print("       ");
-  lcd.setCursor(0, 0);
-  lcd.print(actual_state.pressure_1, DEC);
-  
-  lcd.setCursor(8, 0);
-  lcd.print("       ");
-  lcd.setCursor(8, 0);
-  lcd.print(actual_state.pressure_2, DEC);
+  lcd.print("    Testing     ");
 
   lcd.setCursor(0, 1);
-  lcd.print("Temp: ");
-  lcd.print(actual_state.temperature, DEC);
+  lcd.print("Press to start  ");
+}
+/*------------------------------*/
+
+
+/* Display test screen */
+void display_test_screen(){
+  lcd.setCursor(0, 0);
+  lcd.print("Testing...      ");
+
+  lcd.setCursor(0, 1);
+  lcd.print("State");
+
+  lcd.setCursor(actual_state.test_condition+6, 1);
+  lcd.print("-");
+}
+/*------------------------------*/
+
+
+/* Display test result screen */
+void display_test_result(){
+
+  lcd.setCursor(0, 0);
+  lcd.print("Wasted:        ");
+
+  //lcd.print(actual_state.wasted_gas_value);
+  lcd.print("L");
+
+  lcd.setCursor(15, 1);
+  lcd.print("Time:            ");
+  //lcd.print(actual_state.measuring_time);
+
+  lcd.setCursor(11, 1);
+  if(list_position == 0)  lcd.print(">Yes");
+  else                    lcd.print(">No "); 
 }
 /*------------------------------*/
 
@@ -534,9 +646,35 @@ void display_blowout_screen(){
 
 /* Display system params */
 void  display_system_params(){
-  lcd.setCursor(0, 0);
-  lcd.print("System params screen");
-  lcd.setCursor(5, 1);
-  lcd.print("ver/1.3");
+  
+  if(list_position == 0){
+    lcd.setCursor(0, 0);
+    lcd.print("System params   ");
+    lcd.setCursor(0, 1);
+    lcd.print("     ver/1.3    ");
+  }else{
+    Serial.print(actual_state.adc_press_1);
+    Serial.print("  ");
+    Serial.print(actual_state.pressure_1);
+    Serial.print("  ");
+    Serial.print(actual_state.adc_press_2);
+    Serial.print("  ");
+    Serial.println(actual_state.pressure_2);
+    
+    lcd.setCursor(0, 0);
+    lcd.print("P1      ");
+    lcd.setCursor(1, 0);
+    lcd.print(actual_state.pressure_1, DEC);
+    
+    lcd.setCursor(8, 0);
+    lcd.print("P2      ");
+    lcd.setCursor(9, 0);
+    lcd.print(actual_state.pressure_2, DEC);
+
+    lcd.setCursor(0, 1);
+    lcd.print("Temp: ");
+    lcd.print(actual_state.temperature, DEC);
+  }
+  //list_position
 }
 /*------------------------------*/
