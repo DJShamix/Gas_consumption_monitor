@@ -588,11 +588,11 @@ void display_test_result(){
   //lcd.print(actual_state.wasted_gas_value);
   lcd.print("L");
 
-  lcd.setCursor(15, 1);
+  lcd.setCursor(0, 1);
   lcd.print("Time:            ");
   //lcd.print(actual_state.measuring_time);
 
-  lcd.setCursor(11, 1);
+  lcd.setCursor(12, 1);
   if(list_position == 0)  lcd.print(">Yes");
   else                    lcd.print(">No "); 
 }
@@ -663,12 +663,12 @@ void  display_system_params(){
     
     lcd.setCursor(0, 0);
     lcd.print("P1      ");
-    lcd.setCursor(1, 0);
+    lcd.setCursor(2, 0);
     lcd.print(actual_state.pressure_1, DEC);
     
     lcd.setCursor(8, 0);
     lcd.print("P2      ");
-    lcd.setCursor(9, 0);
+    lcd.setCursor(10, 0);
     lcd.print(actual_state.pressure_2, DEC);
 
     lcd.setCursor(0, 1);
