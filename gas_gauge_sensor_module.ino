@@ -14,7 +14,7 @@ Encoder enc1(encoder_CLK_pin, encoder_DT_pin, encoder_SW_pin);
 #define temperature_sens_pin  A3          // temperature sensor voltage input pin
 
 #define pressure_sensor_shunt_res 239.4   // Ohms 
-#define temp_sensor_current       0.001   // Temp sensor current is 1 mA
+#define temp_sensor_current       0.00109 // Temp sensor current is 1.08 mA
 
 #define update_interval_sens       30        // Update data each 200 millseconds
 #define update_interval_disp       300        // Update data each 600 millseconds
@@ -94,7 +94,7 @@ enum{
   STATE_SET_TIME,
   STATE_SYS_PARAMS
 }display_states;
-uint8_t display_state = STATE_SET_BLOWOUT;
+uint8_t display_state = STATE_SYS_PARAMS;
 uint8_t display_need_update = 0;
 
 uint8_t valve_air_states[9] = {0};
@@ -300,11 +300,20 @@ void calculate_pressure(int sensor_id, int adc_voltage){
 /* Calculate temperature out of the ADC voltage */
 float calculate_temperature(int adc_voltage){
 
-  float sensor_voltage = convert_ADC_volt(adc_voltage);
+  float sensor_voltage = convert_ADC_volt(adc_voltage) / 11.017098;
   float temp_resist = sensor_voltage / temp_sensor_current;
 
   //realize conversion "voltage -> temperature"
   actual_state.temperature = ((temp_resist / 100.0) - 1.0) / 0.00385;
+
+  Serial.print(adc_voltage);
+  Serial.print("\t");
+  Serial.print(sensor_voltage*1000);
+  Serial.print("\t");
+  Serial.print(temp_resist);
+  Serial.print("\t");
+  Serial.println(actual_state.temperature);
+  
 }
 /*------------------------------*/
 
@@ -653,14 +662,14 @@ void  display_system_params(){
     lcd.setCursor(0, 1);
     lcd.print("     ver/1.3    ");
   }else{
-    Serial.print(actual_state.adc_press_1);
+    /*Serial.print(actual_state.adc_press_1);
     Serial.print("  ");
     Serial.print(actual_state.pressure_1);
     Serial.print("  ");
     Serial.print(actual_state.adc_press_2);
     Serial.print("  ");
     Serial.println(actual_state.pressure_2);
-    
+    */
     lcd.setCursor(0, 0);
     lcd.print("P1      ");
     lcd.setCursor(2, 0);
