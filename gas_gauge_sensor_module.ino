@@ -94,7 +94,7 @@ enum{
   STATE_SET_TIME,
   STATE_SYS_PARAMS
 }display_states;
-uint8_t display_state = STATE_SYS_PARAMS;
+uint8_t display_state = STATE_MAIN_SCREEN;
 uint8_t display_need_update = 0;
 
 uint8_t valve_air_states[9] = {0};
@@ -328,6 +328,22 @@ void do_testing_program(){
 
   if(actual_state.test_condition + 1 <= 10)   actual_state.test_condition++;
   else                                        display_state = STATE_TEST_RESULT;
+
+  
+  // Calcutating wasted gas
+  float alpha         = 0.0;    // Коэфф. расхода сужающего устройства
+  float epsilon       = 0.0;    // Поправочный коэфф. на расш. газа от температуры
+  #define koef        1.11072073453 // коэф для расчетной формулы (кор(2)*3.14/4)
+  float d_valve       = 0.0;      // Диаметр отверстия сужающего устройства при T0 (указ. x^2)
+  float pressure_diff = 0.0;      // Дифф. давление 
+  float ro_of_gas     = 1.2041;   // Плотность измеряемой среды при T1 и P1
+  
+  pressure_diff = actual_state.pressure_1 - actual_state.pressure_2;
+  if(pressure_diff < 0.0) pressure_diff = 0;
+  
+  float Q_0 = alpha * epsilon * koef * d_valve * square(pressure_diff/ro_of_gas);
+  
+
   
 }
 /*------------------------------*/
@@ -481,12 +497,15 @@ void do_action_with_encoder(uint8_t action){
             break;
 
           case ENC_CLICK:
-            if(list_position == 8){                           // blow all valves
-              for(int i = 0; i < 8; i++) valve_air_states[i] = 1;
-              control_valves(); 
-              delay(1000);
-              for(int i = 0; i < 8; i++) valve_air_states[i] = 0; 
-              control_valves();
+            if(list_position == 8){                         // blow all valves automatically
+              for(int i = 0; i < 8; i++){
+                valve_air_states[i] = 1;
+                control_valves();
+                delay(1000);
+                valve_air_states[i] = 0; 
+                control_valves();
+                delay(200);
+              }
             } 
             else{ 
               Serial.print("List position: ");
